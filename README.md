@@ -16,11 +16,11 @@ I also began to browse the Riot Games API in order to come up with a problem tha
 
 This week was spent scraping match data in order to finalize a project scope and trying to come up with a robust plan.
 
-<details>
-<summary> Click to open Project Background </summary>
+
 # Project Background
 
 League of Legends game history and stuff--I'll figure out a background; but in essence, there are several "breakpoints" in each game, and with 172 characters in the game, there are bound to be some which excel at earlier breakpoints, and some whose power doesn't spike until much later. I hope to have a data-driven analysis which can accurately describe each champion.
+
 
 # Project Description
 
