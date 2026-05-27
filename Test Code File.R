@@ -3,7 +3,7 @@ library(jsonlite)
 library(tidyverse)
 library(tidymodels)
 
-api_key <- "RGAPI-7e740907-b2dd-4053-83d4-91dd5320706a"
+api_key <- Sys.getenv("RIOT_API_KEY")
 
 ### Scraping high ELO games
 
