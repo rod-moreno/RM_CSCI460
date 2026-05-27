@@ -20,4 +20,8 @@ This week was spent scraping match data in order to finalize a project scope and
 <summary> Click to open Project Background </summary>
 # Project Background
 
-League of Legends game history and stuff--I'll figure out a background; but in essence, there are several "breakpoints" in each game, and with 172 characters in the game, there are bound to be some which excel at earlier breakpoints, and some whose power doesn't spike until much later. This project aims to create a tool where someone can create teams, and it will provide a plan on how to approach the first 10-15 minutes of the match.
+League of Legends game history and stuff--I'll figure out a background; but in essence, there are several "breakpoints" in each game, and with 172 characters in the game, there are bound to be some which excel at earlier breakpoints, and some whose power doesn't spike until much later. I hope to have a data-driven analysis which can accurately describe each champion.
+
+# Project Description
+
+This project aims to create a tool where someone can simulate a draft phase of a League of Legends match by inputting champions into red and blue side. It uses data from top ranked games from the most recent patch, patch 26.10, to develop a model that predicts which side has the advantage to take the three early game objectives, and provide insight into how to play with a team composed of those 5 champions.
