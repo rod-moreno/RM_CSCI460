@@ -51,3 +51,6 @@ match_ids <- req_perform(match_ids_request) |> resp_body_json()
 
 puuids_list <- match_info$metadata$participants
 #Now we have a list of 10 players that we can scrape matches from
+#Next step, automating this scraper to pull PUUIDs from matches, maintain no duplicates
+#and then pull matches from those PUUIDs, removing duplicates as necessary
+#goal is probably anywhere from 2500-5000 match IDs to obtain 25000-50000 rows of data 
