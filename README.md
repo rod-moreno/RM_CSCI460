@@ -25,3 +25,8 @@ League of Legends game history and stuff--I'll figure out a background; but in e
 # Project Description
 
 This project aims to create a tool where someone can simulate a draft phase of a League of Legends match by inputting champions into red and blue side. It uses data from top ranked games from the most recent patch, patch 26.10, to develop a model that predicts which side has the advantage to take the three early game objectives, and provide insight into how to play with a team composed of those 5 champions.
+
+
+# 5/29/26
+
+Today, I created functions in order to streamline the API requests and begin building a dataset. The next steps to this are to begin pulling data from the matches, recoding data to fit the current theory that I have, and crafting a model which can be used to predict the 3 or 4 target variables. 
