@@ -5,7 +5,7 @@ if (!exists("match_pool"))     match_pool     <- character(0)
 if (!exists("puuid_pool"))     puuid_pool     <- character(0)
 if (!exists("visited_puuids")) visited_puuids <- character(0) 
 if (!exists("visited_matches")) visited_matches <- character(0)
-
+if (!dir.exists("data")) dir.create("data")
 #Manual input of high elo player as seed
 puuid1 <- seedplayer("dusklol", "000")
 
@@ -71,4 +71,9 @@ for (loop in total_loops) {
   message("Total Unique Players in Pool: ", length(puuid_pool))
   message("Matches Scanned for Players:  ", length(visited_matches))
   message("Players Scraped for Matches:  ", length(visited_puuids))
+  saveRDS(match_pool,      "data/match_pool.rds")
+  saveRDS(puuid_pool,      "data/puuid_pool.rds")
+  saveRDS(visited_puuids,  "data/visited_puuids.rds")
+  saveRDS(visited_matches, "data/scanned_matches.rds")
 }
+
