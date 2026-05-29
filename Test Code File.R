@@ -3,12 +3,6 @@ library(jsonlite)
 library(tidyverse)
 library(tidymodels)
 
-
-
-
-
-
-
 global_stats_list <- list()
 match_counter <- 1
 m_url <- paste0("https://americas.api.riotgames.com/lol/match/v5/matches/", seed_match_id)

@@ -1,56 +1,81 @@
-library(httr2)
-library(jsonlite)
-library(tidyverse)
-library(tidymodels)
+#Connect to script which contains match history and puuid functions
+source("functionstesting.R")
+
+#Initialize matches and puuid vectors
+if (!exists("match_pool"))     match_pool     <- character(0)
+if (!exists("puuid_pool"))     puuid_pool     <- character(0)
+if (!exists("visited_puuids")) visited_puuids <- character(0) 
+if (!exists("visited_matches")) visited_matches <- character(0)
+
+#Manual input of high elo player as seed
+puuid1 <- seedplayer("dusklol", "000")
 
 
-#Read in Riot API Key (from secret file! so no leaks)
-readRenviron(".Renviron")
-api_key <- Sys.getenv("RIOT_API_KEY")
-
-#Sanity check to see if api_key works
-
-test_url <- "https://na1.api.riotgames.com/lol/status/v4/platform-data"
-resp <- request(test_url) |>
-  req_headers("X-Riot-Token" = api_key) |>
-  req_error(is_error = function(resp) FALSE) |> # Prevents R from crashing if it fails
-  req_perform()
-print(resp$status_code)
+#Obtain seed matches from seed player to pull new profiles from
+if (length(match_pool) == 0) {
+  message("Creating seed player history. . .")
+  match_pool <- gethistory(puuid1)
+}
 
 
-#Take #1 Player on leaderboard (5/27/26)
-game_name <- "dusklol"
-tag_line <- "000"
-
-#Obtain player ID from in-game name and tagline, used for finding match history 
-puuid_url <- paste0("https://americas.api.riotgames.com/riot/account/v1/accounts/by-riot-id/", 
-              game_name, "/", tag_line)
-request <- request(puuid_url) |>
-  req_headers("X-Riot-Token" = api_key)
-response <- req_perform(request)
-user_data <- resp_body_json(response)
-
-puuid1 <- user_data$puuid
-print(paste("PUUID is:", my_puuid))
-
-### Get recent ranked queue matches from that player
-match_ids_url <- paste0("https://americas.api.riotgames.com/lol/match/v5/matches/by-puuid/", 
-                        my_puuid, "/ids?queue=420&start=0&count=5")
-
-#saving API response into a list of 5 most recent matches
-match_ids_request <- request(match_ids_url) |>
-  req_headers("X-Riot-Token" = api_key)
-match_ids <- req_perform(match_ids_request) |> resp_body_json()
+### Obtain first batch of PUUIDs from seed matches
+message("Obtaining PUUIDs. . . ") 
+for (match_id in match_pool) {
+  message("Looking inside match: ", match_id)
+  
+  players <- getpuuids(match_id)
+  
+  puuid_pool <- unique(c(puuid_pool, players)) 
+  visited_matches <- unique(c(visited_matches, match_id))
+  Sys.sleep(1.2)
+}
 
 
-  m_url <- paste0("https://americas.api.riotgames.com/lol/match/v5/matches/", match_ids[[1]])
-  match_info <- request(m_url) |>
-    req_headers("X-Riot-Token" = api_key) |>
-    req_perform() |>
-    resp_body_json()
+# ======================================================
+# Obtain matches from PUUIDs
+# ======================================================
 
-puuids_list <- match_info$metadata$participants
-#Now we have a list of 10 players that we can scrape matches from
-#Next step, automating this scraper to pull PUUIDs from matches, maintain no duplicates
-#and then pull matches from those PUUIDs, removing duplicates as necessary
-#goal is probably anywhere from 2500-5000 match IDs to obtain 25000-50000 rows of data 
+unvisited_puuids <- setdiff(puuid_pool, visited_puuids) 
+
+#Batch size for how many players to run match history on each time
+batch_size <- 15
+currentbatch <- head(unvisited_puuids, batch_size)
+for(puuid in currentbatch) {
+  message("Harvesting matches from: ", puuid) 
+  
+  matches <- gethistory(puuid) 
+  
+  match_pool <- unique(c(match_pool, matches)) 
+  
+  visited_puuids <- unique(c(visited_puuids, puuid)) #Mark them as visited so next time I loop it doesn't catch these players
+  
+  Sys.sleep(1.2)
+}
+
+
+# ======================================================
+# Obtain more PUUIDs from matches
+# ======================================================
+
+unvisited_matches <- setdiff(match_pool, visited_matches)
+
+#Batch size for how many players to run match history on each time
+batch_size <- 15
+currentbatch <- head(unvisited_matches, batch_size)
+for(match_id in currentbatch) {
+  message("Harvesting matches from: ", match_id) 
+  
+  players <- getpuuids(match_id) 
+  
+  match_pool <- unique(c(puuid_pool, players)) 
+  
+  visited_matches <- unique(c(visited_matches, match_id)) #Mark them as visited so next time I loop it doesn't catch these players
+  
+  Sys.sleep(1.2)
+}
+
+message("Current Database:")
+message("Total Players Found: ", length(puuid_pool))
+message("Total Matches Found: ", length(match_pool))
+
+
