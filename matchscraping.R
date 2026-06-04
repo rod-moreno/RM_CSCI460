@@ -38,7 +38,7 @@ for (match_id in match_pool) {
 unvisited_puuids <- setdiff(puuid_pool, visited_puuids) 
 
 #Batch size for how many players to run match history on each time
-batch_size <- 15
+batch_size <- 20
 currentbatch <- head(unvisited_puuids, batch_size)
 for(puuid in currentbatch) {
   message("Harvesting matches from: ", puuid) 
@@ -49,8 +49,8 @@ for(puuid in currentbatch) {
   
   visited_puuids <- unique(c(visited_puuids, puuid)) #Mark them as visited so next time I loop it doesn't catch these players
   
-  Sys.sleep(1.2)
 }
+
 
 
 # ======================================================
@@ -71,9 +71,13 @@ for(match_id in currentbatch) {
   
   visited_matches <- unique(c(visited_matches, match_id)) #Mark them as visited so next time I loop it doesn't catch these players
   
-  Sys.sleep(1.2)
+  Sys.sleep(0.5)
 }
 
+saveRDS(match_pool,      "data/match_pool.rds")
+saveRDS(puuid_pool,      "data/puuid_pool.rds")
+saveRDS(visited_puuids,  "data/visited_puuids.rds")
+saveRDS(visited_matches, "data/scanned_matches.rds")
 message("Current Database:")
 message("Total Players Found: ", length(puuid_pool))
 message("Total Matches Found: ", length(match_pool))

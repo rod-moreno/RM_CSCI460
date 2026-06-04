@@ -6,6 +6,20 @@ if (!exists("puuid_pool"))     puuid_pool     <- character(0)
 if (!exists("visited_puuids")) visited_puuids <- character(0) 
 if (!exists("visited_matches")) visited_matches <- character(0)
 if (!dir.exists("data")) dir.create("data")
+
+
+#Read in data from last pull 
+file_list <- list.files(path = "data", pattern = "\\.rds$", full.names = TRUE)
+#Loop through and assign each file to its own variable name
+for (file in file_list) {
+  # Extract the clean filename without the ".rds" extension
+  obj_name <- tools::file_path_sans_ext(basename(file))
+  
+  # Read the file and assign it to that name in the global environment
+  assign(obj_name, readRDS(file))
+  rm(file, file_list)
+}
+
 #Manual input of high elo player as seed
 puuid1 <- seedplayer("dusklol", "000")
 
@@ -42,7 +56,7 @@ for (loop in total_loops) {
       players <- getpuuids(match_id)
       puuid_pool <- unique(c(puuid_pool, players))
       visited_matches <- unique(c(visited_matches, match_id)) #Mark visited matches as visited
-      Sys.sleep(0.5)
+      Sys.sleep(1)
     }
   }
   else {
@@ -60,7 +74,7 @@ for (loop in total_loops) {
       matches <- gethistory(puuid)
       match_pool <- unique(c(match_pool, matches)) 
       visited_puuids <- unique(c(visited_puuids, puuid)) 
-      Sys.sleep(0.5)
+      Sys.sleep(1)
     }
   }
   # ----------------------------------------------------------------------------
