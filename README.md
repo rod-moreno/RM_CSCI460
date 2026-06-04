@@ -41,3 +41,9 @@ This is a "mock draft" website, wherein you draft champions by putting them into
 
  https://dignitas.gg/articles/a-guide-to-help-you-take-objectives-in-league-of-legends
 This website gives a brief overview of neutral objectives in League of Legends.
+
+
+
+# 6/3/26
+
+During this week, I started taking actual data from the matches, and creating my final dataset. This process included recoding several pieces of data, and binding data together from different sources. From this data, I started to create the prediction models, trying Random Forests, Boosted Trees, and a Logistic Regression. The second step after creating the model is to give each character their statistics, which will be used to create the predictions for the simulation. 
