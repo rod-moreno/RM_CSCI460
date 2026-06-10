@@ -51,8 +51,6 @@ for(puuid in currentbatch) {
   
 }
 
-
-
 # ======================================================
 # Obtain more PUUIDs from matches
 # ======================================================
@@ -77,7 +75,7 @@ for(match_id in currentbatch) {
 saveRDS(match_pool,      "data/match_pool.rds")
 saveRDS(puuid_pool,      "data/puuid_pool.rds")
 saveRDS(visited_puuids,  "data/visited_puuids.rds")
-saveRDS(visited_matches, "data/scanned_matches.rds")
+saveRDS(scanned_matches, "data/scanned_matches.rds")
 message("Current Database:")
 message("Total Players Found: ", length(puuid_pool))
 message("Total Matches Found: ", length(match_pool))
