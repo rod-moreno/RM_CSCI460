@@ -34,11 +34,11 @@ for (match_id in match_pool) {
 # ======================================================
 # Obtain matches from PUUIDs
 # ======================================================
-
-unvisited_puuids <- setdiff(puuid_pool, visited_puuids) 
-
 #Batch size for how many players to run match history on each time
 batch_size <- 20
+
+
+unvisited_puuids <- setdiff(puuid_pool, visited_puuids) 
 currentbatch <- head(unvisited_puuids, batch_size)
 for(puuid in currentbatch) {
   message("Harvesting matches from: ", puuid) 
@@ -48,26 +48,38 @@ for(puuid in currentbatch) {
   match_pool <- unique(c(match_pool, matches)) 
   
   visited_puuids <- unique(c(visited_puuids, puuid)) #Mark them as visited so next time I loop it doesn't catch these players
+  Sys.sleep(1.8)
+}
+
+for (puuid in puuid_pool) {
+  matches <- tryCatch({
+    gethistory(puuid)
+  }, error = function(e) {
+    message("Skipping ", puuid, " — ", e$message)
+    return(character(0))
+  })
   
+  match_pool <- unique(c(match_pool, matches))
+  Sys.sleep(1.2)
 }
 
 # ======================================================
 # Obtain more PUUIDs from matches
 # ======================================================
-
-unvisited_matches <- setdiff(match_pool, visited_matches)
-
-#Batch size for how many players to run match history on each time
+#Batch size for how many matches to pull player IDs from
 batch_size <- 15
-currentbatch <- head(unvisited_matches, batch_size)
-for(match_id in currentbatch) {
+
+
+unvisited_matches <- setdiff(match_pool, scanned_matches)
+currentmatchbatch <- head(unvisited_matches, batch_size)
+for(match_id in currentmatchbatch) {
   message("Harvesting matches from: ", match_id) 
   
   players <- getpuuids(match_id) 
   
-  match_pool <- unique(c(puuid_pool, players)) 
+  match_pool <- unique(c(match_pool, players)) 
   
-  visited_matches <- unique(c(visited_matches, match_id)) #Mark them as visited so next time I loop it doesn't catch these players
+  scanned_matches <- unique(c(scanned_matches, match_id)) #Mark them as visited so next time I loop it doesn't catch these players
   
   Sys.sleep(0.5)
 }
@@ -80,4 +92,6 @@ message("Current Database:")
 message("Total Players Found: ", length(puuid_pool))
 message("Total Matches Found: ", length(match_pool))
 
+match_pool <- readRDS("data/match_pool.rds")
 
+match_pool <- unique(match_pool)

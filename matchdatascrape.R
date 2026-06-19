@@ -3,14 +3,13 @@ source("functionstesting.R")
 source("readdata.R")
 
 rm(training_dataset)
-training_dataset <- tibble()
-
+rawmatchdata <- tibble()
 
 
 
 #Create dataset, setup unextracted matches pool 
-if (nrow(training_dataset) > 0) {
-  unextracted_matches <- setdiff(match_pool, unique(training_dataset$matchId))
+if (nrow(rawmatchdata) > 0) {
+  unextracted_matches <- setdiff(match_pool, unique(rawmatchdata$matchId))
 } else {
   unextracted_matches <- match_pool
 }
@@ -19,7 +18,7 @@ if (nrow(training_dataset) > 0) {
 #Set how many matches to extract in each batch
 matches_to_extract <- head(unextracted_matches, 100)
 #Pull data from matches
-for (m_id in head(matches_to_extract, 95)) {
+for (m_id in matches_to_extract) {
   message("Processing Match: ", m_id)
   
   # Safe data pull
@@ -40,23 +39,21 @@ for (m_id in head(matches_to_extract, 95)) {
     left_join(timeline_summary, by = c("matchId", "participantId"))
   
   # 4. Save to master
-  training_dataset <- bind_rows(training_dataset, combined_features)
-  unextracted_matches <- setdiff(match_pool, unique(training_dataset$matchId))
+  rawmatchdata <- bind_rows(rawmatchdata, combined_features)
   Sys.sleep(2.5)
 
 }
-saveRDS(training_dataset, "data/data2/rawmatchdata.rds")
+unextracted_matches <- setdiff(match_pool, unique(rawmatchdata$matchId))
+saveRDS(rawmatchdata, "data/data2/rawmatchdata.rds")
 saveRDS(unextracted_matches, "data/data2/unextracted_matches.rds")
-# Inspect your beautiful training matrix!
-view(training_dataset)
 
 
 #Sanity check to make sure there are no duplicates
-training_dataset %>%
+rawmatchdata %>%
   count(matchId, name = "player_count") %>%
   count(player_count, name = "number_of_matches")
 
-processed_data <- training_dataset %>%
+processed_data <- rawmatchdata %>%
   # 1. Group by match to evaluate game-wide metrics
   group_by(matchId) %>%
   mutate(
@@ -84,3 +81,13 @@ processed_data <- training_dataset %>%
 
 
 saveRDS(processed_data, "data/data2/processed_data.rds")
+
+
+is_match_id <- grepl("^[A-Z0-9]+_[0-9]+$", match_pool)
+is_puuid    <- !is_match_id
+
+cat("Valid match IDs:", sum(is_match_id), "\n")
+cat("Accidental PUUIDs:", sum(is_puuid), "\n")
+
+
+match_pool <- match_pool[is_match_id]

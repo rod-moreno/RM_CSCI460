@@ -37,7 +37,7 @@ match_level_training_set <- blue_side %>%
   mutate(blue_won_dragon = as.factor(if_else(blue_drag == 1, 1, 0))) %>% 
   select(-matchId, -blue_drag)
 
-champion_profiles <- processed_training_set %>% 
+champion_profiles <- processed_data %>% 
   group_by(championName) %>% 
   summarise(
     base_cs_per_min   = mean(early_cs_per_min, na.rm = TRUE),
@@ -47,8 +47,9 @@ champion_profiles <- processed_training_set %>%
     
     # Keeps the static 1 or 0 designation per champion profile
     has_global_ult    = unique(has_global_ult), 
-    .groups = "drop"
-  )
+    .groups = "drop")
+
+    unique(champion_profiles$championName)
 
 set.seed(123)
 match_split <- initial_split(match_level_training_set, prop = 0.80, strata = blue_won_dragon)

@@ -32,7 +32,7 @@ team_level_features <- processed_data %>%
     mid_stomp        = max(earlyLaningPhaseGoldExpAdvantage[teamPosition == "MIDDLE"]),
     adc_stomp        = max(earlyLaningPhaseGoldExpAdvantage[teamPosition == "BOTTOM"]),    
     supp_stomp       = max(earlyLaningPhaseGoldExpAdvantage[teamPosition == "UTILITY"]),   
-    # 5. Minutes 3-7 Jungle Attention / Hover Pct per Lane
+    # 5. Minutes 3-7 Jungle Attention
     top_prox         = max(jungle_proximity_pct[teamPosition == "TOP"]),
     mid_prox         = max(jungle_proximity_pct[teamPosition == "MIDDLE"]),
     adc_prox         = max(jungle_proximity_pct[teamPosition == "BOTTOM"]),    

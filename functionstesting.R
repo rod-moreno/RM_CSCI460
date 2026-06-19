@@ -6,6 +6,7 @@ library(xgboost)
 library(vip)
 library(LiblineaR)
 library(themis)
+library(caret)
 #Read in Riot API Key (from secret file! so no leaks)
 readRenviron(".Renviron")
 api_key <- Sys.getenv("RIOT_API_KEY")
@@ -238,107 +239,200 @@ extract_timeline_summary <- function(m_id) {
 }
 
 
-Since we have moved to a "Blind Leader" engine, your simulation function needs to be precise. It must calculate the gold state for both sides, identify who the "Leader" is, calculate the gaps relative to that leader, and then map the final probability back to Blue/Red for your display.
-
-Here is the final, optimized version of your simulator function:
-  R
-
-simulate_final_draft <- function(blue_draft, red_draft, scuttle_count = 1L) {
-  
-  # 1. Pull and Pivot Blue stats
+simulate_final_draft <- function(blue_draft, red_draft, base_rate_leader = 0.68) {
+  # 1. Pull and Pivot Blue stats using Role-Specific Identities
   blue_stats <- tibble(position = names(blue_draft), championName = blue_draft) %>%
-    left_join(champion_profiles, by = "championName") %>%
+    mutate(teamPosition = case_when(
+      position == "top" ~ "TOP",
+      position == "jng" ~ "JUNGLE",
+      position == "mid" ~ "MIDDLE",
+      position == "adc" ~ "BOTTOM",
+      position == "sup" ~ "UTILITY"
+    )) %>%
+    left_join(champion_profiles, by = c("championName", "teamPosition")) %>%
     mutate(id = 1) %>% 
     pivot_wider(
       id_cols = id, names_from = position, 
-      values_from = c(base_gold_pm, base_efficiency, base_stomp, base_proximity, base_roaming),
+      values_from = c(base_gold_pm, base_efficiency, base_stomp, base_proximity, base_roaming, base_crab_count),
       names_glue = "{.value}_{position}_blue"
     )
   
-  # 2. Pull and Pivot Red stats
+  # 2. Pull and Pivot Red stats using Role-Specific Identities
   red_stats <- tibble(position = names(red_draft), championName = red_draft) %>%
-    left_join(champion_profiles, by = "championName") %>%
+    mutate(teamPosition = case_when(
+      position == "top" ~ "TOP",
+      position == "jng" ~ "JUNGLE",
+      position == "mid" ~ "MIDDLE",
+      position == "adc" ~ "BOTTOM",
+      position == "sup" ~ "UTILITY"
+    )) %>%
+    left_join(champion_profiles, by = c("championName", "teamPosition")) %>%
     mutate(id = 1) %>% 
     pivot_wider(
       id_cols = id, names_from = position, 
-      values_from = c(base_gold_pm, base_efficiency, base_stomp, base_proximity, base_roaming),
+      values_from = c(base_gold_pm, base_efficiency, base_stomp, base_proximity, base_roaming, base_crab_count),
       names_glue = "{.value}_{position}_red"
     )
   
-  # 3. Compute Blind Leader-Centric Gaps
-  # This matches the logic of your training dataset exactly
+  # 3. Compute Map Metrics and Predictor Columns (Base: Blue - Red)
   simulated_match <- blue_stats %>%
     inner_join(red_stats, by = "id") %>%
     mutate(
-      initialCrabCount = as.integer(scuttle_count),
-      matchId = as.factor("SIM_MATCH_01"),
-      
-      # Determine who the "Leader" is based on total gold
-      blue_gold = base_gold_pm_top_blue + base_gold_pm_jng_blue + base_gold_pm_mid_blue + base_gold_pm_adc_blue + base_gold_pm_sup_blue,
-      red_gold  = base_gold_pm_top_red + base_gold_pm_jng_red + base_gold_pm_mid_red + base_gold_pm_adc_red + base_gold_pm_sup_red,
-      blue_is_leader = blue_gold >= red_gold,
-      total_gold_advantage = abs(blue_gold - red_gold),
+      matchId        = as.factor("SIM_MATCH_01"),
       global_ult_gap = as.numeric(0),
       
-      # Calculate gaps: Leader minus Trailer
-      top_gold_gap    = if_else(blue_is_leader, base_gold_pm_top_blue - base_gold_pm_top_red, base_gold_pm_top_red - base_gold_pm_top_blue),
-      jungle_gold_gap = if_else(blue_is_leader, base_gold_pm_jng_blue - base_gold_pm_jng_red, base_gold_pm_jng_red - base_gold_pm_jng_blue),
-      mid_gold_gap    = if_else(blue_is_leader, base_gold_pm_mid_blue - base_gold_pm_mid_red, base_gold_pm_mid_red - base_gold_pm_mid_blue),
-      adc_gold_gap    = if_else(blue_is_leader, base_gold_pm_adc_blue - base_gold_pm_adc_red, base_gold_pm_adc_red - base_gold_pm_adc_blue),
-      supp_gold_gap   = if_else(blue_is_leader, base_gold_pm_sup_blue - base_gold_pm_sup_red, base_gold_pm_sup_red - base_gold_pm_sup_blue),
+      # DYNAMIC SCUTTLE ESTIMATION: Sum up the expected crab takes of both junglers
+      initialCrabCount = as.integer(round(base_crab_count_jng_blue + base_crab_count_jng_red)),
       
-      top_gold_eff_gap    = if_else(blue_is_leader, base_efficiency_top_blue - base_efficiency_top_red, base_efficiency_top_red - base_efficiency_top_blue),
-      jungle_gold_eff_gap = if_else(blue_is_leader, base_efficiency_jng_blue - base_efficiency_jng_red, base_efficiency_jng_red - base_efficiency_jng_blue),
-      mid_gold_eff_gap    = if_else(blue_is_leader, base_efficiency_mid_blue - base_efficiency_mid_red, base_efficiency_mid_red - base_efficiency_mid_blue),
-      adc_gold_eff_gap    = if_else(blue_is_leader, base_efficiency_adc_blue - base_efficiency_adc_red, base_efficiency_adc_red - base_efficiency_adc_blue),
-      supp_gold_eff_gap   = if_else(blue_is_leader, base_efficiency_sup_blue - base_efficiency_sup_red, base_efficiency_sup_red - base_efficiency_sup_blue),
+      # Master Gold Summaries to determine the Economic Leader
+      blue_gold      = base_gold_pm_top_blue + base_gold_pm_jng_blue + base_gold_pm_mid_blue + base_gold_pm_adc_blue + base_gold_pm_sup_blue,
+      red_gold       = base_gold_pm_top_red  + base_gold_pm_jng_red  + base_gold_pm_mid_red  + base_gold_pm_adc_red  + base_gold_pm_sup_red,
+      blue_is_leader = blue_gold >= red_gold,
       
-      top_stomp_gap    = if_else(blue_is_leader, base_stomp_top_blue - base_stomp_top_red, base_stomp_top_red - base_stomp_top_blue),
-      jungle_stomp_gap = if_else(blue_is_leader, base_stomp_jng_blue - base_stomp_jng_red, base_stomp_jng_red - base_stomp_jng_blue),
-      mid_stomp_gap    = if_else(blue_is_leader, base_stomp_mid_blue - base_stomp_mid_red, base_stomp_mid_red - base_stomp_mid_blue),
-      adc_stomp_gap    = if_else(blue_is_leader, base_stomp_adc_blue - base_stomp_adc_red, base_stomp_adc_red - base_stomp_adc_blue),
-      supp_stomp_gap   = if_else(blue_is_leader, base_stomp_sup_blue - base_stomp_sup_red, base_stomp_sup_red - base_stomp_sup_blue),
+      # Gold Leads (Matches your actual XGBoost suffix "_gold_lead")
+      top_gold_lead    = base_gold_pm_top_blue - base_gold_pm_top_red,
+      jungle_gold_lead = base_gold_pm_jng_blue - base_gold_pm_jng_red,
+      mid_gold_lead    = base_gold_pm_mid_blue - base_gold_pm_mid_red,
+      adc_gold_lead    = base_gold_pm_adc_blue - base_gold_pm_adc_red,
+      supp_gold_lead   = base_gold_pm_sup_blue - base_gold_pm_sup_red,
       
-      top_prox_gap  = if_else(blue_is_leader, base_proximity_top_blue - base_proximity_top_red, base_proximity_top_red - base_proximity_top_blue),
-      mid_prox_gap  = if_else(blue_is_leader, base_proximity_mid_blue - base_proximity_mid_red, base_proximity_mid_red - base_proximity_mid_blue),
-      adc_prox_gap  = if_else(blue_is_leader, base_proximity_adc_blue - base_proximity_adc_red, base_proximity_adc_red - base_proximity_adc_blue),
-      supp_prox_gap = if_else(blue_is_leader, base_proximity_sup_blue - base_proximity_sup_red, base_proximity_sup_red - base_proximity_sup_blue),
+      # Gold Efficiency Leads (Subtracted Value Model, matches "_gold_eff_lead")
+      top_gold_eff_lead    = base_efficiency_top_blue - base_efficiency_top_red,
+      jungle_gold_eff_lead = base_efficiency_jng_blue - base_efficiency_jng_red,
+      mid_gold_eff_lead    = base_efficiency_mid_blue - base_efficiency_mid_red,
+      adc_gold_eff_lead    = base_efficiency_adc_blue - base_efficiency_adc_red,
+      supp_gold_eff_lead   = base_efficiency_sup_blue - base_efficiency_sup_red,
       
-      mid_roam_gap  = if_else(blue_is_leader, base_roaming_mid_blue - base_roaming_mid_red, base_roaming_mid_red - base_roaming_mid_blue),
-      adc_roam_gap  = if_else(blue_is_leader, base_roaming_adc_blue - base_roaming_adc_red, base_roaming_adc_red - base_roaming_adc_blue),
-      supp_roam_gap = if_else(blue_is_leader, base_roaming_sup_blue - base_roaming_sup_red, base_roaming_sup_red - base_roaming_sup_blue)
+      # Lane Stomp Gaps (Matches "_stomp_gap")
+      top_stomp_gap    = base_stomp_top_blue - base_stomp_top_red,
+      jungle_stomp_gap = base_stomp_jng_blue - base_stomp_jng_red,
+      mid_stomp_gap    = base_stomp_mid_blue - base_stomp_mid_red,
+      adc_stomp_gap    = base_stomp_adc_blue - base_stomp_adc_red,
+      supp_stomp_gap   = base_stomp_sup_blue - base_stomp_sup_red,
+      
+      # Proximity Gaps (Matches "_prox_gap")
+      top_prox_gap  = base_proximity_top_blue - base_proximity_top_red,
+      mid_prox_gap  = base_proximity_mid_blue - base_proximity_mid_red,
+      adc_prox_gap  = base_proximity_adc_blue - base_proximity_adc_red,
+      supp_prox_gap = base_proximity_sup_blue - base_proximity_sup_red,
+      
+      # Roaming Gaps (Matches "_roam_gap")
+      mid_roam_gap  = base_roaming_mid_blue - base_roaming_mid_red,
+      adc_roam_gap  = base_roaming_adc_blue - base_roaming_adc_red,
+      supp_roam_gap = base_roaming_sup_blue - base_roaming_sup_red
     )
   
-  # 4. Predict
-  probabilities <- predict(final_dragon_fit, simulated_match, type = "prob")
-  
-  # Identify which column index actually correlates to the "Leader" winning.
-  # If your output is skewed, it means the model thinks the other class is the winner.
-  # Let's explicitly define them:
-  prob_leader  <- probabilities$.pred_Leader_Drag
-  prob_trailer <- probabilities$.pred_Trailer_Drag
-  
-  # IF your output is inverted, swap the probabilities here:
-   prob_leader <- probabilities$.pred_Trailer_Drag
-   prob_trailer <- probabilities$.pred_Leader_Drag
-  
-  # Map back to Blue/Red
-  if (simulated_match$blue_is_leader[1]) {
-    prob_blue <- prob_leader
-    prob_red  <- prob_trailer
-  } else {
-    prob_blue <- prob_trailer
-    prob_red  <- prob_leader
+  # Strategic Sign Flip: If Red is the actual leader, invert all predictors to (Red - Blue)
+  if (!simulated_match$blue_is_leader[1]) {
+    predictor_cols <- names(simulated_match)[grepl("_lead$|_gap$", names(simulated_match))]
+    simulated_match[predictor_cols] <- -1 * simulated_match[predictor_cols]
   }
   
-  # 5. Output Report
+  # 4. Feature Isolation & Model Execution
+  model_ready_data <- simulated_match %>%
+    select(matchId, initialCrabCount, global_ult_gap, ends_with("_lead"), ends_with("_gap"))
+  
+  is_dead_tie <- simulated_match$blue_gold[1] == simulated_match$red_gold[1]
+  
+  if (is_dead_tie) {
+    prob_leader  <- 0.5
+    prob_trailer <- 0.5
+  }else {
+    # Use final_xgb_model extracted from your tuned workflow
+    probabilities <- predict(final_xgb_model, model_ready_data, type = "prob")
+    
+    # SMART COLUMN DETECTION: Find which column belongs to the leader
+    all_cols <- names(probabilities)
+    leader_idx <- which(grepl("leader|1|_yes", all_cols, ignore.case = TRUE))
+    
+    if (length(leader_idx) == 1) {
+      leader_col  <- all_cols[leader_idx]
+      trailer_col <- all_cols[-leader_idx]
+    } else {
+      # Fallback defaults if names are completely ambiguous
+      leader_col  <- all_cols[2] 
+      trailer_col <- all_cols[1]
+    }
+    
+    prob_leader  <- probabilities[[leader_col]]
+    prob_trailer <- probabilities[[trailer_col]]
+  }
+  
+  # ==========================================
+  # 5 & 6. Reframe and Map Predictions
+  # ==========================================
+  is_dead_tie <- simulated_match$blue_gold[1] == simulated_match$red_gold[1]
+  
+  if (is_dead_tie) {
+    prob_blue        <- 0.5
+    prob_red         <- 0.5
+    draft_edge_blue  <- 0.0
+    draft_edge_red   <- 0.0
+    advantage_label  <- "None (Perfectly Even Draft)"
+  } else {
+    # (Keep your existing predicting/sign-flipping block here...)
+    probabilities <- predict(final_xgb_model, model_ready_data, type = "prob")
+    leader_col  <- names(probabilities)[1] # Or your smart column logic
+    trailer_col <- names(probabilities)[2]
+    
+    prob_leader  <- probabilities[[leader_col]]
+    prob_trailer <- probabilities[[trailer_col]]
+    
+    draft_edge_leader  <- (prob_leader - base_rate_leader) * 100
+    draft_edge_trailer <- -(draft_edge_leader)
+    
+    if (simulated_match$blue_is_leader[1]) {
+      prob_blue        <- prob_leader
+      prob_red         <- prob_trailer
+      draft_edge_blue  <- draft_edge_leader
+      draft_edge_red   <- draft_edge_trailer
+      advantage_label  <- "Blue Side"
+    } else {
+      prob_blue        <- prob_trailer
+      prob_red         <- prob_leader
+      draft_edge_blue  <- draft_edge_trailer
+      draft_edge_red   <- draft_edge_leader
+      advantage_label  <- "Red Side"
+    }
+  }
+  
+  # ==========================================
+  # 7. Output Report: Reconfigured with Tie-Handling
+  # ==========================================
   cat("\n======================================================\n")
-  cat("      SIMULATOR V3: BLIND LEADER ENGINE               \n")
-  cat("======================================================\n")
-  cat("Advantage Holder: ", if_else(simulated_match$blue_is_leader[1], "Blue Side", "Red Side"), "\n")
-  cat("Prob. Blue Secures First Dragon: ", round(prob_blue * 100, 1), "%\n")
-  cat("Prob. Red Secures First Dragon:  ", round(prob_red * 100, 1), "%\n")
+  cat("         FIRST DRAGON DRAFT SIMULATION REPORT         \n")
   cat("======================================================\n")
   
-  return(simulated_match)
+  cat("EARLY LANE POWER OVERVIEW:\n")
+  
+  # Use explicit equality checks to handle perfect ties
+  print_lane_status <- function(lead_val) {
+    if (lead_val > 0)  return("Favors Blue Side")
+    if (lead_val < 0)  return("Favors Red Side")
+    return("Perfectly Even Matchup")
+  }
+  
+  cat("  • Top Lane    :", print_lane_status(simulated_match$top_gold_lead[1]), "\n")
+  cat("  • Jungle      :", print_lane_status(simulated_match$jungle_gold_lead[1]), "\n")
+  cat("  • Mid Lane    :", print_lane_status(simulated_match$mid_gold_lead[1]), "\n")
+  
+  blue_bot_gold <- simulated_match$base_gold_pm_adc_blue[1] + simulated_match$base_gold_pm_sup_blue[1]
+  red_bot_gold  <- simulated_match$base_gold_pm_adc_red[1]  + simulated_match$base_gold_pm_sup_red[1]
+  bot_lead      <- blue_bot_gold - red_bot_gold
+  cat("  • Bottom Duo  :", print_lane_status(bot_lead), "\n")
+  cat("------------------------------------------------------\n")
+  
+  cat("DRAFT MATCHUP & SYNERGY VALUE:\n")
+  cat("  Blue Team Selection : ", sprintf("%+.1f%%", draft_edge_blue), " Value Added via Champions\n", sep = "")
+  cat("  Red Team Selection  : ", sprintf("%+.1f%%", draft_edge_red), " Value Added via Champions\n", sep = "")
+  cat("------------------------------------------------------\n")
+  
+  cat("FINAL OBJECTIVE CONTROL PREDICTION:\n")
+  cat("  Blue Side Chance to Secure First Dragon: ", round(prob_blue * 100, 1), "%\n", sep = "")
+  cat("  Red Side  Chance to Secure First Dragon: ", round(prob_red * 100, 1), "%\n", sep = "")
+  
+  if (is_dead_tie) {
+    cat("\nCONCLUSION: Mirror match detected. Teams have identical macro leverage.\n")
+  }
+  return(invisible(simulated_match))
 }
