@@ -228,8 +228,25 @@ model %>%
     x = "Features",
     y = "Importance (Impurity)"
   )
+team_kill_totals <- processed_data %>%
+  group_by(matchId, teamId) %>%
+  summarise(team_kills = sum(kills, na.rm = TRUE), .groups = "drop")
 
-champion_profiles <- processed_data %>%
+# Step 2: join team kill totals back to player level and compute a
+# per-game kill_participation for each player row. Guard against the
+# rare case where team_kills == 0 (surrender/remake) to avoid Inf/NaN.
+processed_data_with_kp <- processed_data %>%
+  left_join(team_kill_totals, by = c("matchId", "teamId")) %>%
+  mutate(
+    kill_participation = if_else(
+      team_kills > 0,
+      (kills + assists) / team_kills,
+      NA_real_   # exclude 0-kill games from the KP average rather than pulling it toward 0
+    )
+  )
+
+
+champion_profiles <- processed_data_with_kp %>%
   group_by(championName, teamPosition) %>%
   summarise(
     # 1 & 2. Gold and Gold Efficiency Baselines
@@ -251,13 +268,17 @@ champion_profiles <- processed_data %>%
     base_crab_count = if (unique(teamPosition) == "JUNGLE") mean(initialCrabCount, na.rm = TRUE) else 0,
     
     games_played    = n(),
+    win_rate        = mean(win, na.rm = TRUE),
+    kill_participation = mean(kill_participation, na.rm = TRUE), 
+    
     .groups = "drop"
   ) %>%
-  filter(games_played >= 10) %>%
+  filter(games_played >= 5) %>%
   select(
     championName, teamPosition, base_gold_pm, base_efficiency, 
-    base_stomp, base_proximity, base_roaming, base_crab_count, games_played
+    base_stomp, base_proximity, base_roaming, base_crab_count, games_played, win_rate, kill_participation
   )
+
 saveRDS(champion_profiles, "data/data2/champion_profiles.rds")
 saveRDS(model, "data/data2/model.rds")
 saveRDS(final_xgb_model, "data/data2/final_xgb_model.rds")
@@ -294,8 +315,7 @@ smooth_metrics <- predict(smooth_fit, testing_set) %>%
 
 print(smooth_metrics)
 
-smooth_fit %>%
-  extract_fit_parsnip() %>%
+final_smooth_model %>%
   vip(num_features = 23, geom = "col", aesthetics = list(fill = "steelblue")) +
   theme_minimal() +
   labs(

@@ -83,11 +83,5 @@ processed_data <- rawmatchdata %>%
 saveRDS(processed_data, "data/data2/processed_data.rds")
 
 
-is_match_id <- grepl("^[A-Z0-9]+_[0-9]+$", match_pool)
-is_puuid    <- !is_match_id
-
-cat("Valid match IDs:", sum(is_match_id), "\n")
-cat("Accidental PUUIDs:", sum(is_puuid), "\n")
-
 
 match_pool <- match_pool[is_match_id]
