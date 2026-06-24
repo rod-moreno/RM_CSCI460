@@ -1,0 +1,251 @@
+---
+title: "Early Game Jungle Analysis"
+subtitle: "Scuttle Dominance, Side Asymmetry, and Jungler Behavior"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    fig-width: 9
+    fig-height: 5
+execute:
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(supernova)
+library(tidyverse)
+library(supernova)
+processed_data <- readRDS("processed_data.rds")
+champion_profiles <- readRDS("champion_profiles.rds")
+team_level_features <- readRDS("team_leveL_features.rds")
+rawmatchdata <- readRDS("rawmatchdata.rds")
+```
+
+## Overview
+
+This document explores early game jungle behavior in League of Legends using
+match-level data. The central questions are:
+
+- Does scuttle dominance translate into meaningful gold and pressure advantages?
+- Do blue and red side differ in how they convert scuttle control?
+- Does losing scuttles push junglers toward more aggressive, gank-oriented play?
+
+---
+
+## Dragon Takedown Timing
+
+Before looking at scuttle dominance, it is worth establishing when dragon
+contests are actually happening. The distributions below show first dragon
+takedown time split by side, filtered to games where a dragon was taken.
+
+```{r dragon-histogram}
+processed_data %>%
+  filter(earliestDragonTakedown > 0) %>%
+  ggplot() +
+  geom_histogram(aes(x = earliestDragonTakedown), color = "black", fill = "#c2dbff") +
+  facet_wrap(~teamId) +
+  theme_classic() +
+  labs(
+    title    = "First Dragon Takedown Time",
+    subtitle = "Split by Blue (100) and Red (200) teams",
+    x        = "Earliest Dragon Takedown (seconds)",
+    y        = "Count"
+  )
+```
+
+```{r dragon-boxplot}
+processed_data %>%
+  filter(earliestDragonTakedown > 0) %>%
+  ggplot() +
+  geom_boxplot(aes(y = earliestDragonTakedown), fill = "#c2dbff") +
+  facet_grid(~teamId) +
+  theme_classic() +
+  labs(
+    title    = "First Dragon Takedown Time — Spread",
+    subtitle = "Split by Blue (100) and Red (200) teams",
+    y        = "Earliest Dragon Takedown (seconds)"
+  )
+```
+
+---
+
+## Champion Sample Sizes by Role
+
+To contextualize the champion-level analyses, the chart below shows average
+games played per champion broken out by role. Roles with fewer games per
+champion may produce noisier estimates downstream.
+
+```{r games-by-role}
+champion_profiles %>%
+  group_by(teamPosition) %>%
+  summarise(avg_games = mean(games_played, na.rm = TRUE)) %>%
+  ggplot(aes(x = teamPosition, y = avg_games, fill = teamPosition)) +
+  geom_col() +
+  theme_classic() +
+  labs(
+    title = "Average Games Played per Champion by Role",
+    x     = NULL,
+    y     = "Average Games Played",
+    fill  = NULL
+  )
+```
+
+---
+
+## Team and Rift Herald
+
+A quick correlation check between Red vs. Blue team and if they took the Rift Herald shows that blue team takes 
+
+```{r cs-herald-cor}
+cor.test(processed_data$teamId, processed_data$teamRiftHeraldKills)
+processed_data %>%
+  group_by(teamId) %>%
+  count(teamRiftHeraldKills) %>%
+  mutate(
+    teamId = if_else(teamId == 100, "Blue", "Red"),
+  ) %>%
+  pivot_wider(names_from = teamRiftHeraldKills, values_from = n)
+```
+
+---
+
+## Gold by Scuttle Dominance and Side
+
+Here we move to the central question: does scuttle dominance translate into
+gold leads, and does blue or red side convert it more efficiently?
+
+Each team's `initialCrabCount` reflects their own scuttle haul (0, 1, or 2),
+making this a true per-team measure rather than a derived gap.
+
+```{r gold-anova}
+gold_cols <- c("top_gold", "jungle_gold", "mid_gold", "adc_gold", "supp_gold")
+
+team_analysis <- team_level_features %>%
+  mutate(
+    side = if_else(teamId == 100, "Blue", "Red"),
+    crab_group = factor(initialCrabCount,
+                        levels = c(0, 1, 2),
+                        labels = c("No Scuttle", "One Scuttle", "Full Control"))
+  )
+
+gold_anova_results <- map_df(gold_cols, function(col) {
+  formula <- as.formula(paste(col, "~ crab_group * side"))
+  fit     <- lm(formula, data = team_analysis)
+  f       <- summary(fit)$fstatistic
+
+  tibble(
+    feature    = col,
+    F_stat     = round(f[1], 3),
+    p_value    = pf(f[1], f[2], f[3], lower.tail = FALSE),
+  )
+}) %>%
+  arrange(p_value) %>%
+  mutate(
+    p_adjusted  = p.adjust(p_value, method = "BH"),
+    significant = p_adjusted < 0.05
+  )
+
+gold_anova_results
+```
+
+```{r gold-plot}
+team_analysis %>%
+  select(crab_group, side, all_of(gold_cols)) %>%
+  pivot_longer(cols = all_of(gold_cols),
+               names_to  = "metric",
+               values_to = "gold") %>%
+  group_by(crab_group, side, metric) %>%
+  summarise(mean_gold = mean(gold, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = crab_group, y = mean_gold, color = side, group = side)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Blue" = "steelblue", "Red" = "tomato")) +
+  facet_wrap(~ metric, scales = "free_y") +
+  theme_minimal() +
+  labs(
+    title    = "Mean Gold by Scuttle Dominance and Side",
+    subtitle = "Does blue or red side convert scuttle dominance into gold more efficiently?",
+    x        = "Scuttle Dominance",
+    y        = "Mean Gold",
+    color    = NULL
+  )
+```
+
+---
+
+## Jungler Kill Participation and Proximity
+
+If junglers losing scuttles are pushed out of the river, a hypothesis is that they will instead spend
+their time lane ganking, causing proximity percent to go up and KP to increase compared to double crabs. 
+
+```{r participation-setup}
+
+jungle_involvement <- rawmatchdata %>%
+  filter(teamPosition == "JUNGLE") %>%
+  mutate(kill_participation = kills + assists) %>%
+  select(matchId, teamId, kill_participation)
+
+team_analysis <- team_level_features %>%
+  left_join(jungle_involvement, by = c("matchId", "teamId")) %>%
+  mutate(
+    side = if_else(teamId == 100, "Blue", "Red"),
+    crab_group = factor(initialCrabCount,
+                        levels = c(0, 1, 2),
+                        labels = c("No Scuttle", "One Scuttle", "Full Control"))
+  )
+```
+
+```{r participation-anova}
+fit <- lm(kill_participation.x ~ crab_group * side, data = team_analysis)
+summary(fit)
+```
+
+```{r participation-plot}
+prox_cols <- c("top_prox", "mid_prox", "adc_prox", "supp_prox")
+
+team_analysis %>%
+  select(crab_group, side, kill_participation.x, all_of(prox_cols)) %>%
+  pivot_longer(cols = -c(crab_group, side),
+               names_to  = "metric",
+               values_to = "value") %>%
+  group_by(crab_group, side, metric) %>%
+  summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = crab_group, y = mean_value, color = side, group = side)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Blue" = "steelblue", "Red" = "tomato")) +
+  facet_wrap(~ metric, scales = "free_y") +
+  theme_minimal() +
+  labs(
+    title    = "Jungler Kill Participation and Proximity by Scuttle Dominance",
+    subtitle = "Tests whether losing scuttles leads to more aggressive/gank-oriented play",
+    x        = "Scuttle Dominance",
+    y        = "Mean Value",
+    color    = NULL
+  )
+```
+
+---
+
+## Key Takeaways
+
+- **Red side consistently earns more gold** across all roles regardless of
+  scuttle count, though the rate of increase with scuttle dominance is similar
+  for both sides. The exception is top lane, where red side pulls ahead more
+  sharply at Full Control.
+
+- **Kill participation rises with scuttle dominance** rather than falling,
+meaning that of course junglers who win both scuttles will also have more 
+agency on the entire map. 
+
+- **Lane proximity drops across all roles as scuttle dominance increases**,
+  even though kill participation is rising. This points to scuttle-dominant
+  junglers collecting kills through river skirmishes rather than traditional
+  ganks.
+
+- **The working heuristic:** a jungler losing scuttles is more likely to seek
+  kill participation through lane ganks; a jungler winning scuttles is
+  collecting it through river and objective fights.

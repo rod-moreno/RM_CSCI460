@@ -95,3 +95,5 @@ rm(test)
 
 #Keep
 cor.test(processed_data$early_cs_per_min, processed_data$teamRiftHeraldKills)
+
+cor.test(processed_data$early_cs_per_min, processed_data$teamId)
