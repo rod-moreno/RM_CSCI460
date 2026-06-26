@@ -14,7 +14,11 @@ library(DT)
 final_smooth_model <- readRDS("final_smooth_model.rds")
 champion_profiles  <- readRDS("champion_profiles.rds")
 
-champion_choices <- as.character(sort(unique(champion_profiles$championName)))
+top_choices <- champion_profiles %>% filter(teamPosition == "TOP") %>% pull(championName) %>% unique() %>% sort() %>% as.character()
+jng_choices <- champion_profiles %>% filter(teamPosition == "JUNGLE") %>% pull(championName) %>% unique() %>% sort() %>% as.character()
+mid_choices <- champion_profiles %>% filter(teamPosition == "MIDDLE") %>% pull(championName) %>% unique() %>% sort() %>% as.character()
+adc_choices <- champion_profiles %>% filter(teamPosition == "BOTTOM") %>% pull(championName) %>% unique() %>% sort() %>% as.character()
+sup_choices <- champion_profiles %>% filter(teamPosition == "UTILITY") %>% pull(championName) %>% unique() %>% sort() %>% as.character()
 
 # Derive a role-agnostic fallback by averaging each champion's per-role stats
 build_champion_profiles_fallback_from_profiles <- function(champion_profiles) {
@@ -60,36 +64,43 @@ simulate_final_draft <- function(blue_draft, red_draft,
   champion_profiles_fallback <- champion_profiles_fallback %>%
     mutate(championName = as.character(championName))
   
-  stat_cols <- c("base_gold_pm", "base_efficiency", "base_stomp",
-                 "base_proximity", "base_roaming", "base_crab_count")
+  # Stat columns that exist in champion_profiles
+  stat_cols <- c("base_efficiency", "base_stomp", "base_proximity", 
+                 "base_roaming", "base_crab_count")
   
+  # ── Helper: position-level defaults when a champion is fully unknown ──────
   get_position_default <- function(pos, metric) {
     global_position_defaults[[metric]][global_position_defaults$teamPosition == pos]
   }
   
-  assemble_side <- function(draft, side_label) {
+  # ── Helper: build a tidy 5-row stats frame for one side ──────────────────
+  assemble_side <- function(draft) {
     champs <- c(as.character(draft$top), as.character(draft$jng),
                 as.character(draft$mid), as.character(draft$adc),
                 as.character(draft$sup))
-    roles  <- c("top", "jng", "mid", "adc", "sup")
+    # Use consistent position keys throughout — "supp" matches model feature names
+    roles  <- c("top", "jng", "mid", "adc", "supp")
     
     base <- data.frame(position = roles, championName = champs,
                        stringsAsFactors = FALSE) %>%
       mutate(teamPosition = case_when(
-        position == "top" ~ "TOP",
-        position == "jng" ~ "JUNGLE",
-        position == "mid" ~ "MIDDLE",
-        position == "adc" ~ "BOTTOM",
-        position == "sup" ~ "UTILITY"
+        position == "top"  ~ "TOP",
+        position == "jng"  ~ "JUNGLE",
+        position == "mid"  ~ "MIDDLE",
+        position == "adc"  ~ "BOTTOM",
+        position == "supp" ~ "UTILITY"
       ))
     
+    # 1. Try role-specific lookup first (best quality)
     role_specific <- base %>%
       left_join(champion_profiles, by = c("championName", "teamPosition"))
     
+    # 2. Fall back to cross-role profile for the same champion
+    fb_cols <- stat_cols
     with_fallback <- role_specific %>%
       left_join(
         champion_profiles_fallback %>%
-          rename_with(~ paste0(.x, "_fb"), all_of(c(stat_cols, "games_played_fb"))),
+          rename_with(~ paste0(.x, "_fb"), all_of(fb_cols)),
         by = "championName"
       )
     
@@ -98,89 +109,131 @@ simulate_final_draft <- function(blue_draft, red_draft,
       with_fallback[[col]] <- dplyr::coalesce(with_fallback[[col]], with_fallback[[fb_col]])
     }
     
-    for (i in 1:nrow(with_fallback)) {
-      if (with_fallback$championName[i] == "" || is.na(with_fallback$base_gold_pm[i])) {
+    # 3. Fall back to global position average for fully unknown champions
+    for (i in seq_len(nrow(with_fallback))) {
+      if (with_fallback$championName[i] == "" || is.na(with_fallback$base_efficiency[i])) {
         pos <- with_fallback$teamPosition[i]
         for (col in stat_cols) {
-          with_fallback[[col]][i] <- get_position_default(pos, col) # FIXED: Changed 'guide=' to '<-'
+          with_fallback[[col]][i] <- get_position_default(pos, col)
         }
       }
     }
     
-    stats <- with_fallback %>%
+    with_fallback %>%
       select(position, championName, teamPosition, all_of(stat_cols)) %>%
       mutate(id = 1)
-    
-    list(stats = stats)
   }
   
-  blue_stats <- assemble_side(blue_draft, "blue")$stats
-  red_stats  <- assemble_side(red_draft,  "red")$stats
+  blue_stats <- assemble_side(blue_draft)
+  red_stats  <- assemble_side(red_draft)
   
+  # ── Pivot each side to wide format ───────────────────────────────────────
   blue_wide <- blue_stats %>%
     pivot_wider(
-      id_cols = id, names_from = position,
+      id_cols     = id,
+      names_from  = position,
       values_from = all_of(stat_cols),
-      names_glue = "{.value}_{position}_blue"
+      names_glue  = "{.value}_{position}_blue"
     )
   
   red_wide <- red_stats %>%
     pivot_wider(
-      id_cols = id, names_from = position,
+      id_cols     = id,
+      names_from  = position,
       values_from = all_of(stat_cols),
-      names_glue = "{.value}_{position}_red"
+      names_glue  = "{.value}_{position}_red"
     )
   
-  # VARIANCE INFLATION FACTOR
-  variance_inflation <- 6.5
-  
+  # ── Compute gaps (Blue - Red) matching model feature names exactly ────────
   simulated_match <- blue_wide %>%
     inner_join(red_wide, by = "id") %>%
     mutate(
-      matchId        = as.factor("SIM_MATCH_01"),
-      global_ult_gap = as.numeric(0),
+      matchId          = as.factor("SIM_MATCH_01"),
+      global_ult_gap   = as.numeric(0),
       initialCrabCount = as.integer(round(base_crab_count_jng_blue + base_crab_count_jng_red)),
       
-      top_gold_lead    = (base_gold_pm_top_blue - base_gold_pm_top_red) * variance_inflation,
-      jungle_gold_lead = (base_gold_pm_jng_blue - base_gold_pm_jng_red) * variance_inflation,
-      mid_gold_lead    = (base_gold_pm_mid_blue - base_gold_pm_mid_red) * variance_inflation,
-      adc_gold_lead    = (base_gold_pm_adc_blue - base_gold_pm_adc_red) * variance_inflation,
-      supp_gold_lead   = (base_gold_pm_sup_blue - base_gold_pm_sup_red) * variance_inflation,
+      # Efficiency gaps: non-CS income (kills, assists, plates)
+      top_eff_gap    = base_efficiency_top_blue  - base_efficiency_top_red,
+      jng_eff_gap    = base_efficiency_jng_blue  - base_efficiency_jng_red,
+      mid_eff_gap    = base_efficiency_mid_blue  - base_efficiency_mid_red,
+      adc_eff_gap    = base_efficiency_adc_blue  - base_efficiency_adc_red,
+      supp_eff_gap   = base_efficiency_supp_blue - base_efficiency_supp_red,
       
-      top_gold_eff_lead    = (base_efficiency_top_blue - base_efficiency_top_red) * variance_inflation,
-      jungle_gold_eff_lead = (base_efficiency_jng_blue - base_efficiency_jng_red) * variance_inflation,
-      mid_gold_eff_lead    = (base_efficiency_mid_blue - base_efficiency_mid_red) * variance_inflation,
-      adc_gold_eff_lead    = (base_efficiency_adc_blue - base_efficiency_adc_red) * variance_inflation,
-      supp_gold_eff_lead   = (base_efficiency_sup_blue - base_efficiency_sup_red) * variance_inflation,
+      # Lane stomp gaps (binary difference)
+      top_stomp_gap  = base_stomp_top_blue  - base_stomp_top_red,
+      jng_stomp_gap  = base_stomp_jng_blue  - base_stomp_jng_red,
+      mid_stomp_gap  = base_stomp_mid_blue  - base_stomp_mid_red,
+      adc_stomp_gap  = base_stomp_adc_blue  - base_stomp_adc_red,
+      supp_stomp_gap = base_stomp_supp_blue - base_stomp_supp_red,
       
-      top_stomp_gap    = base_stomp_top_blue - base_stomp_top_red,
-      jungle_stomp_gap = base_stomp_jng_blue - base_stomp_jng_red,
-      mid_stomp_gap    = base_stomp_mid_blue - base_stomp_mid_red,
-      adc_stomp_gap    = base_stomp_adc_blue - base_stomp_adc_red,
-      supp_stomp_gap   = base_stomp_sup_blue - base_stomp_sup_red,
+      # Jungle proximity gaps
+      top_prox_gap   = base_proximity_top_blue  - base_proximity_top_red,
+      mid_prox_gap   = base_proximity_mid_blue  - base_proximity_mid_red,
+      adc_prox_gap   = base_proximity_adc_blue  - base_proximity_adc_red,
+      supp_prox_gap  = base_proximity_supp_blue - base_proximity_supp_red,
       
-      top_prox_gap  = base_proximity_top_blue - base_proximity_top_red,
-      mid_prox_gap  = base_proximity_mid_blue - base_proximity_mid_red,
-      adc_prox_gap  = base_proximity_adc_blue - base_proximity_adc_red,
-      supp_prox_gap = base_proximity_sup_blue - base_proximity_sup_red,
-      
-      mid_roam_gap  = base_roaming_mid_blue - base_roaming_mid_red,
-      adc_roam_gap  = base_roaming_adc_blue - base_roaming_adc_red,
-      supp_roam_gap = base_roaming_sup_blue - base_roaming_sup_red
+      # Roaming gaps
+      mid_roam_gap   = base_roaming_mid_blue  - base_roaming_mid_red,
+      adc_roam_gap   = base_roaming_adc_blue  - base_roaming_adc_red,
+      supp_roam_gap  = base_roaming_supp_blue - base_roaming_supp_red
     )
   
+  # ── Select exactly the columns the model was trained on ──────────────────
   model_ready_data <- simulated_match %>%
-    select(matchId, initialCrabCount, global_ult_gap, ends_with("_lead"), ends_with("_gap"))
+    select(
+      matchId,
+      initialCrabCount,
+      global_ult_gap,
+      ends_with("_eff_gap"),
+      ends_with("_stomp_gap"),
+      ends_with("_prox_gap"),
+      ends_with("_roam_gap")
+    )
   
+  
+  # ── Predict ──────────────────────────────────────────────────────────────
   probabilities <- predict(final_smooth_model, model_ready_data, type = "prob")
   
-  prob_blue <- as.numeric(probabilities[[2]][1])
+  # Won_Drag is the positive class (blue secured dragon)
+  prob_blue <- as.numeric(probabilities$.pred_Won_Drag[1])
+  amplified_prob <- 0.5 + ((prob_blue - 0.5) * 2) 
+  final_drag_prob <- max(min(amplified_prob * 100, 90), 10) 
+  # Calculate Average Team Efficiency for the new UI Bar
+  blue_avg_eff <- mean(c(simulated_match$base_efficiency_top_blue, simulated_match$base_efficiency_jng_blue, 
+                         simulated_match$base_efficiency_mid_blue, simulated_match$base_efficiency_adc_blue, 
+                         simulated_match$base_efficiency_supp_blue), na.rm = TRUE)
   
-  return(list(dragon_blue = as.numeric(prob_blue * 100)))
+  red_avg_eff <- mean(c(simulated_match$base_efficiency_top_red, simulated_match$base_efficiency_jng_red, 
+                        simulated_match$base_efficiency_mid_red, simulated_match$base_efficiency_adc_red, 
+                        simulated_match$base_efficiency_supp_red), na.rm = TRUE)
+  
+  blue_eff_share <- if ((blue_avg_eff + red_avg_eff) == 0) 0.5 else  (blue_avg_eff / (blue_avg_eff + red_avg_eff))
+  amplified_share <- 0.5 + ((blue_eff_share - 0.5) * 15)
+  final_share <- max(min(amplified_share * 100, 90), 10) 
+  # Calculate a "Disparity Score" by summing the absolute gaps for each role
+  # (Handling roles that lack roaming/proximity features gracefully)
+  disp_top  <- abs(simulated_match$top_eff_gap) + abs(simulated_match$top_stomp_gap) + abs(simulated_match$top_prox_gap)
+  disp_jng  <- abs(simulated_match$jng_eff_gap) + abs(simulated_match$jng_stomp_gap)
+  disp_mid  <- abs(simulated_match$mid_eff_gap) + abs(simulated_match$mid_stomp_gap) + abs(simulated_match$mid_prox_gap) + abs(simulated_match$mid_roam_gap)
+  disp_adc  <- abs(simulated_match$adc_eff_gap) + abs(simulated_match$adc_stomp_gap) + abs(simulated_match$adc_prox_gap) + abs(simulated_match$adc_roam_gap)
+  disp_supp <- abs(simulated_match$supp_eff_gap) + abs(simulated_match$supp_stomp_gap) + abs(simulated_match$supp_prox_gap) + abs(simulated_match$supp_roam_gap)
+  
+  disparities <- c("Top Lane" = disp_top, "Jungle" = disp_jng, "Mid Lane" = disp_mid, "ADC" = disp_adc, "Support" = disp_supp)
+  max_disp_lane <- names(disparities)[which.max(disparities)]
+  
+  # Handle empty drafts or perfect mirror matches
+  if(all(disparities == 0)) max_disp_lane <- "Even Matchup"
+  
+  return(list(
+    dragon_blue = final_drag_prob,
+    blue_eff_share = final_share,
+    max_disp_lane = max_disp_lane
+  ))
 }
 # ==============================================================================
 # 3. USER INTERFACE SPECIFICATION
 # ==============================================================================
+
 ui <- page_navbar(
   title = "LoL Draft Simulator (with dragon prediction)",
   theme = bs_theme(version = 5, bootswatch = "darkly"),
@@ -210,28 +263,42 @@ ui <- page_navbar(
         
         card(
           card_header(class = "bg-primary text-white", "Blue Side Team Selection"),
-          selectInput("blue_top", "Top Lane:", choices = c("Select Champion" = "", champion_choices)),
-          selectInput("blue_jng", "Jungle:",   choices = c("Select Champion" = "", champion_choices)),
-          selectInput("blue_mid", "Mid Lane:", choices = c("Select Champion" = "", champion_choices)),
-          selectInput("blue_adc", "ADC:",      choices = c("Select Champion" = "", champion_choices)),
-          selectInput("blue_sup", "Support:",  choices = c("Select Champion" = "", champion_choices))
+          selectInput("blue_top", "Top Lane:", choices = c("Select Champion" = "", top_choices)),
+          selectInput("blue_jng", "Jungle:",   choices = c("Select Champion" = "", jng_choices)),
+          selectInput("blue_mid", "Mid Lane:", choices = c("Select Champion" = "", mid_choices)),
+          selectInput("blue_adc", "ADC:",      choices = c("Select Champion" = "", adc_choices)),
+          selectInput("blue_sup", "Support:",  choices = c("Select Champion" = "", sup_choices))
         ),
         
         card(
           card_header(class = "bg-danger text-white", "Red Side Team Selection"),
-          selectInput("red_top", "Top Lane:", choices = c("Select Champion" = "", champion_choices)),
-          selectInput("red_jng", "Jungle:",   choices = c("Select Champion" = "", champion_choices)),
-          selectInput("red_mid", "Mid Lane:", choices = c("Select Champion" = "", champion_choices)),
-          selectInput("red_adc", "ADC:",      choices = c("Select Champion" = "", champion_choices)),
-          selectInput("red_sup", "Support:",  choices = c("Select Champion" = "", champion_choices))
+          selectInput("red_top", "Top Lane:", choices = c("Select Champion" = "", top_choices)),
+          selectInput("red_jng", "Jungle:",   choices = c("Select Champion" = "", jng_choices)),
+          selectInput("red_mid", "Mid Lane:", choices = c("Select Champion" = "", mid_choices)),
+          selectInput("red_adc", "ADC:",      choices = c("Select Champion" = "", adc_choices)),
+          selectInput("red_sup", "Support:",  choices = c("Select Champion" = "", sup_choices))
         ),
-        
         card(
           card_header(class = "bg-dark text-white", "Live Matchup Metrics"),
+          
+          # Metric 1: Dragon Control
           p(strong("First Dragon Control Probability")),
-          div(class = "progress", style = "height: 10px;",
+          div(class = "progress mb-3", style = "height: 15px;",
               div(id = "blue_bar", class = "progress-bar bg-primary", style = "width: 50%;"),
               div(id = "red_bar",  class = "progress-bar bg-danger",  style = "width: 50%;")
+          ),
+          
+          # Metric 2: Efficiency Disparity
+          p(strong("Predicted Team Efficiency Share")),
+          div(class = "progress mb-4", style = "height: 10px;",
+              div(id = "blue_eff_bar", class = "progress-bar bg-primary", style = "width: 50%;"),
+              div(id = "red_eff_bar",  class = "progress-bar bg-danger",  style = "width: 50%;")
+          ),
+          
+          # Metric 3: Highest Disparity Lane
+          p(
+            strong("Wackest Lane (Highest Stat Disparity): "), 
+            textOutput("volatile_lane", inline = TRUE)
           )
         )
       )
@@ -243,15 +310,16 @@ ui <- page_navbar(
     
     card(
       card_header(class = "bg-dark text-white", "Filter by Role"),
-      selectInput("stats_role", "Role:",
-                  choices = c(
-                    "Top"     = "TOP",
-                    "Jungle"  = "JUNGLE",
-                    "Mid"     = "MIDDLE",
-                    "ADC"     = "BOTTOM",
-                    "Support" = "UTILITY"
-                  ),
-                  selected = "TOP")
+      radioButtons("stats_role", "Role:",
+                   choices = c(
+                     "Top"     = "TOP",
+                     "Jungle"  = "JUNGLE",
+                     "Mid"     = "MIDDLE",
+                     "ADC"     = "BOTTOM",
+                     "Support" = "UTILITY"
+                   ),
+                   selected = "TOP",
+                   inline = TRUE) # Forces items side-by-side
     ),
     
     card(
@@ -279,24 +347,37 @@ server <- function(input, output, session) {
       )
     }, error = function(e) {
       message("simulate_final_draft() failed: ", conditionMessage(e))
-      list(dragon_blue = 50)
+      # Include fallbacks for the new metrics so the UI doesn't break on load
+      list(dragon_blue = 50, blue_eff_share = 50, max_disp_lane = "Awaiting Draft...")
     })
   })
   
-  observe({
-    
+  observeEvent(list(
+    input$blue_top, input$blue_jng, input$blue_mid, input$blue_adc, input$blue_sup,
+    input$red_top,  input$red_jng,  input$red_mid,  input$red_adc,  input$red_sup
+  ), {
     metrics <- live_metrics()
     
+    # Format Dragon Bar
     b_drag <- max(min(round(metrics$dragon_blue), 100), 0)
     r_drag <- 100 - b_drag
     
-    runjs(sprintf("
-      var blueBar = document.getElementById('blue_bar');
-      var redBar  = document.getElementById('red_bar');
-      blueBar.style.width = '%d%%';
-      redBar.style.width  = '%d%%';
-    ", b_drag, r_drag))
+    # Format Efficiency Bar
+    b_eff <- max(min(round(metrics$blue_eff_share), 100), 0)
+    r_eff <- 100 - b_eff
     
+    runjs(sprintf("
+      document.getElementById('blue_bar').style.width = '%d%%';
+      document.getElementById('red_bar').style.width  = '%d%%';
+      document.getElementById('blue_eff_bar').style.width = '%d%%';
+      document.getElementById('red_eff_bar').style.width  = '%d%%';
+    ", b_drag, r_drag, b_eff, r_eff))
+  }, ignoreNULL = FALSE, ignoreInit = FALSE)
+  
+  # Render Text for the Highest Disparity Lane
+  output$volatile_lane <- renderText({
+    metrics <- live_metrics()
+    metrics$max_disp_lane
   })
   
   output$champion_stats_table <- DT::renderDataTable({
@@ -307,8 +388,8 @@ server <- function(input, output, session) {
         filter(teamPosition == input$stats_role) %>%
         arrange(championName) %>%
         select(
-          Champion              = championName,
-          Position              = teamPosition,
+          Champion             = championName,
+          Position             = teamPosition,
           `Avg. Gold/min`       = base_gold_pm,
           `Efficiency Score`    = base_efficiency,
           `Lane Stomp%`         = base_stomp,
@@ -324,8 +405,8 @@ server <- function(input, output, session) {
         filter(teamPosition == input$stats_role) %>%
         arrange(championName) %>%
         select(
-          Champion              = championName,
-          Position              = teamPosition,
+          Champion             = championName,
+          Position             = teamPosition,
           `Avg. Gold/min`       = base_gold_pm,
           `Efficiency Score`    = base_efficiency,
           `Lane Stomp%`         = base_stomp,
@@ -345,7 +426,9 @@ server <- function(input, output, session) {
       options  = list(
         pageLength = 25,
         order      = list(list(0, "asc")),
-        scrollX    = TRUE
+        scrollX    = TRUE,
+        scrollY    = "500px",       # Freezes titles by introducing an internal vertical scrollbox
+        scrollCollapse = TRUE       # Shrinks container if there are fewer rows than the max height
       )
     ) %>%
       DT::formatPercentage(pct_cols, digits = 1) %>%
@@ -361,3 +444,5 @@ server <- function(input, output, session) {
 
 # Launch Application Instance
 shinyApp(ui = ui, server = server)
+
+

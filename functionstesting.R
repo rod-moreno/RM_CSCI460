@@ -33,7 +33,7 @@ global_ult_champions <- c(
 gethistory <- function (x) {
   ### Get recent ranked queue matches from that player
   match_ids_url <- paste0("https://americas.api.riotgames.com/lol/match/v5/matches/by-puuid/", 
-                          x, "/ids?queue=420&start=0&count=5")
+                          x, "/ids?queue=420&start=0&count=10")
   
   #saving API response into a list of 5 most recent matches
   match_ids_request <- request(match_ids_url) %>%

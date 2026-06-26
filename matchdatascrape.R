@@ -80,6 +80,26 @@ processed_data <- rawmatchdata %>%
   ungroup()
 
 
+processed_data <- processed_data %>% 
+  mutate(championName = if_else(championName == "MonkeyKing", "Wukong", championName))
+
+
+#There were some missing values for teamPosition rows, those 3 games were dropped
+valid_positions <- c("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
+invalid_match_ids <- processed_data %>%
+  filter(teamPosition %in% valid_positions) %>%
+  group_by(matchId, teamId) %>%
+  summarise(unique_roles = n_distinct(teamPosition), .groups = "drop") %>%
+  filter(unique_roles != 5) %>%
+  pull(matchId) %>%
+  unique()
+
+processed_data <- processed_data %>%
+  filter(!matchId %in% invalid_match_ids)
+
+
+
+
 saveRDS(processed_data, "data/data2/processed_data.rds")
 
 

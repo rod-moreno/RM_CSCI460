@@ -1,24 +1,6 @@
 source("functionstesting.R")
 source("readData.R")
 
-processed_data <- processed_data %>% 
-  mutate(championName = if_else(championName == "MonkeyKing", "Wukong", championName))
-
-
-#There were some missing values for teamPosition rows, those 3 games were dropped
-valid_positions <- c("TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY")
-invalid_match_ids <- processed_data %>%
-  filter(teamPosition %in% valid_positions) %>%
-  group_by(matchId, teamId) %>%
-  summarise(unique_roles = n_distinct(teamPosition), .groups = "drop") %>%
-  filter(unique_roles != 5) %>%
-  pull(matchId) %>%
-  unique()
-
-processed_data <- processed_data %>%
-  filter(!matchId %in% invalid_match_ids)
-
-
 
 team_level_features <- processed_data %>% 
   group_by(matchId, teamId) %>% 
@@ -273,7 +255,7 @@ champion_profiles <- processed_data_with_kp %>%
     
     .groups = "drop"
   ) %>%
-  filter(games_played >= 5) %>%
+  filter(games_played >= 75) %>%
   select(
     championName, teamPosition, base_gold_pm, base_efficiency, 
     base_stomp, base_proximity, base_roaming, base_crab_count, games_played, win_rate, kill_participation
@@ -283,9 +265,6 @@ saveRDS(champion_profiles, "data/data2/champion_profiles.rds")
 saveRDS(model, "data/data2/model.rds")
 saveRDS(final_xgb_model, "data/data2/final_xgb_model.rds")
 
-importance_matrix <- xgb.importance(model = extract_fit_engine(final_xgb_model))
-
-xgb.plot.importance(importance_matrix)
 
 
 smooth_xgb_spec <- boost_tree(
@@ -328,3 +307,22 @@ final_smooth_model %>%
 final_smooth_model <- extract_fit_parsnip(smooth_fit)
 
 saveRDS(final_smooth_model, "app/final_smooth_model.rds")
+
+
+
+test_predictions <- predict(final_smooth_model, testing_set, type = "prob")
+
+results_df <- testing_set %>%
+  bind_cols(test_predictions)
+
+ggplot(results_df, aes(x = .pred_Won_Drag)) +
+  geom_histogram(binwidth = 0.01, fill = "#375a7f", color = "white", alpha = 0.9) +
+  geom_vline(xintercept = 0.5, color = "#e74c3c", linetype = "dashed", linewidth = 1) +
+  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+  labs(
+    title = "Distribution of Model Confidence (First Dragon)",
+    subtitle = "Checking for the 'Marginal Win' clustering effect",
+    x = "Predicted Probability (Blue Secures Dragon)",
+    y = "Number of Simulated Matches"
+  ) +
+  theme_minimal()

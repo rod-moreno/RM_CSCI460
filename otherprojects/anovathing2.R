@@ -1,3 +1,5 @@
+library(supernova)
+
 # =======================================================
 # 1. Subset and reframe around crab count as the factor
 # =======================================================
@@ -430,3 +432,171 @@ full_control %>%
     y        = "Gap Value",
     fill     = NULL
   )
+
+
+library(tidyverse)
+
+
+#KEEP THIS
+# =======================================================
+# 1. Prep the data
+# =======================================================
+
+jungle_involvement <- rawmatchdata %>%
+  filter(teamPosition == "JUNGLE") %>%
+  mutate(kill_participation = kills + assists) %>%
+  select(matchId, teamId, kill_participation)
+
+team_level_features <- team_level_features %>%
+  left_join(jungle_involvement, by = c("matchId", "teamId"))
+
+team_analysis <- team_level_features %>%
+  mutate(
+    side = if_else(teamId == 100, "Blue", "Red"),
+    crab_group = factor(initialCrabCount,
+                        levels = c(0, 1, 2),
+                        labels = c("No Scuttle", "One Scuttle", "Full Control"))
+  )
+# =======================================================
+# 2. ANOVA — does gold differ by scuttle dominance per role?
+# =======================================================
+gold_cols <- c("top_prox", "mid_prox", "adc_prox", "supp_prox")
+
+gold_anova_results <- map_df(gold_cols, function(col) {
+  formula <- as.formula(paste(col, "~ crab_group * side"))
+  fit     <- lm(formula, data = team_analysis)
+  
+  tibble(
+    feature = col,
+    F_stat  = summary(fit)$fstatistic[1],
+    p_value = pf(summary(fit)$fstatistic[1],
+                 summary(fit)$fstatistic[2],
+                 summary(fit)$fstatistic[3],
+                 lower.tail = FALSE)
+  )
+}) %>%
+  arrange(p_value) %>%
+  mutate(
+    p_adjusted  = p.adjust(p_value, method = "BH"),
+    significant = p_adjusted < 0.05
+  )
+
+cat("--- ANOVA: Gold by Scuttle Dominance x Side ---\n")
+print(gold_anova_results, n = Inf)
+
+# =======================================================
+# 3. Pivot longer for visualization
+# =======================================================
+team_analysis %>%
+  select(crab_group, side, all_of(gold_cols)) %>%
+  pivot_longer(cols = all_of(gold_cols),
+               names_to  = "metric",
+               values_to = "gold") %>%
+  group_by(crab_group, side, metric) %>%
+  summarise(mean_gold = mean(gold, na.rm = TRUE), .groups = "drop") %>%
+  
+  # =======================================================
+# 4. Interaction plot — blue vs red by scuttle dominance
+# =======================================================
+ggplot(aes(x = crab_group, y = mean_gold,
+           color = side, group = side)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Blue" = "steelblue", "Red" = "tomato")) +
+  facet_wrap(~ metric, scales = "free_y") +
+  theme_minimal() +
+  labs(
+    title    = "Mean Gold by Scuttle Dominance and Side",
+    subtitle = "Does blue or red side convert scuttle dominance into gold more efficiently?",
+    x        = "Scuttle Dominance",
+    y        = "Mean Gold",
+    color    = NULL
+  )
+
+
+# =======================================================
+# 1. Build jungler kill participation at team level
+# =======================================================
+jungle_involvement <- rawmatchdata %>%
+  filter(teamPosition == "JUNGLE") %>%
+  mutate(kill_participation = kills + assists) %>%
+  select(matchId, teamId, kill_participation)
+
+team_level_features <- team_level_features %>%
+  left_join(jungle_involvement, by = c("matchId", "teamId"))
+
+# =======================================================
+# 2. Prep the data
+# =======================================================
+team_analysis <- team_level_features %>%
+  mutate(
+    side = if_else(teamId == 100, "Blue", "Red"),
+    crab_group = factor(initialCrabCount,
+                        levels = c(0, 1, 2),
+                        labels = c("No Scuttle", "One Scuttle", "Full Control"))
+  )
+
+# =======================================================
+# 3. ANOVA — does kill participation differ by scuttle dominance?
+# =======================================================
+formula <- as.formula("kill_participation ~ crab_group * side")
+fit     <- lm(formula, data = team_analysis)
+
+cat("--- ANOVA: Jungler Kill Participation by Scuttle Dominance x Side ---\n")
+summary(fit)
+
+# Quick eta-squared for effect size
+tbl        <- supernova(fit)$tbl
+ss_model   <- tbl[1, "SS"]
+ss_total   <- tbl[nrow(tbl), "SS"]
+cat("Eta-squared:", round(ss_model / ss_total, 4), "\n")
+
+# =======================================================
+# 4. Group means — sanity check before plotting
+# =======================================================
+team_analysis %>%
+  group_by(crab_group, side) %>%
+  summarise(
+    n                      = n(),
+    mean_kill_participation = mean(kill_participation, na.rm = TRUE),
+    mean_top_prox          = mean(top_prox,           na.rm = TRUE),
+    mean_mid_prox          = mean(mid_prox,           na.rm = TRUE),
+    mean_adc_prox          = mean(adc_prox,           na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  print(n = Inf)
+
+# =======================================================
+# 5. Pivot longer — kill participation + proximity together
+# =======================================================
+team_analysis %>%
+  select(crab_group, side, kill_participation, 
+         top_prox, mid_prox, adc_prox, supp_prox) %>%
+  pivot_longer(cols = -c(crab_group, side),
+               names_to  = "metric",
+               values_to = "value") %>%
+  group_by(crab_group, side, metric) %>%
+  summarise(mean_value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+  
+  # =======================================================
+# 6. Interaction plot — kill participation alongside proximity
+# =======================================================
+ggplot(aes(x = crab_group, y = mean_value,
+           color = side, group = side)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Blue" = "steelblue", "Red" = "tomato")) +
+  facet_wrap(~ metric, scales = "free_y") +
+  theme_minimal() +
+  labs(
+    title    = "Jungler Kill Participation and Proximity by Scuttle Dominance",
+    subtitle = "Tests whether losing scuttles leads to more aggressive/gank-oriented play",
+    x        = "Scuttle Dominance",
+    y        = "Mean Value",
+    color    = NULL
+  )
+
+saveRDS(team_level_features, "team_level_features.rds")
+saveRDS(processed_data, "otherprojects/processed_data.rds")
+saveRDS(champion_profiles, "otherprojects/champion_profiles.rds")
+saveRDS(rawmatchdata, "otherprojects/rawmatchdata.rds")
