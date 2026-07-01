@@ -47,3 +47,16 @@ This website gives a brief overview of neutral objectives in League of Legends.
 # 6/3/26
 
 During this week, I started taking actual data from the matches, and creating my final dataset. This process included recoding several pieces of data, and binding data together from different sources. From this data, I started to create the prediction models, trying Random Forests, Boosted Trees, and a Logistic Regression. The second step after creating the model is to give each character their statistics, which will be used to create the predictions for the simulation. 
+
+
+# 6/10/26
+
+This week was used to finalize the model, landing on a Boosted Tree using feature subsampling in order to smooth out the importance of the predictors inside this model. I also kept scaling the dataset. The actual model formula is still in progress, due to the imbalanced nature of the dataset. The next steps are to learn about this imbalance and try to assuage it, and then move on with the actual application.
+
+# 6/15/26
+
+This week was mostly used for sidebars and other EDA ideas I had that were largely unrelated to the prediction, but rather some of the curiosities I had about the game itself. All I really did was run different visualizations and calculate certain metrics based off of columns that already appear in the table. I also started working on the Shiny application, which will be used for the live demo.
+
+#6/23/26
+
+The Shiny app works, and I've made the other pages of the application besides the predictor to be working fine. The rest of the week was spent creating the slide deck used for the presentation on 6/30.
